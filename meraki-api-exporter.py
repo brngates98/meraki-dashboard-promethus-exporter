@@ -128,14 +128,11 @@ def get_usage(dashboard, organizationId):
 
         for reading in sensor['readings']:
             metric = reading['metric']
-            if metric == 'temperature':
-                the_list[sensor['serial']]['temperature'] = reading['temperature']['celsius']
-            elif metric == 'humidity':
-                the_list[sensor['serial']]['humidity'] = reading['humidity']['relativePercentage']
-            # Add other metrics here with similar checks...
+            if metric not in the_list[sensor['serial']]:
+                the_list[sensor['serial']][metric] = reading[metric]
 
     print('Done')
-    return(the_list)
+    return the_list
 
 
 class MyHandler(http.server.BaseHTTPRequestHandler):
@@ -152,7 +149,7 @@ class MyHandler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         if "/?target=" not in self.path and "/organizations" not in self.path:
             self._set_headers_404()
-            return()
+            return
 
         self._set_headers()
         dashboard = meraki.DashboardAPI(API_KEY, output_log=False, print_console=True)
@@ -209,7 +206,7 @@ class MyHandler(http.server.BaseHTTPRequestHandler):
         for host in host_stats.keys():
             try:
                 target = '{serial="' + host + \
-                         '",name="' + (host_stats[host]['name'] if host_stats[host]['name'] != "" else host_stats[host]['mac'] ) + \
+                         '",name="' + (host_stats[host]['name'] if host_stats[host]['name'] != "" else host_stats[host]['mac']) + \
                          '",networkId="' + host_stats[host]['networkId'] + \
                          '",orgName="' + host_stats[host]['orgName'] + \
                          '",orgId="' + organizationId + \
@@ -218,7 +215,7 @@ class MyHandler(http.server.BaseHTTPRequestHandler):
                 break
             try:
                 if host_stats[host]['latencyMs'] is not None:
-                    response += 'meraki_device_latency' + target + '} ' + str(host_stats[host]['latencyMs']/1000) + '\n'
+                    response += 'meraki_device_latency' + target + '} ' + str(host_stats[host]['latencyMs'] / 1000) + '\n'
                 if host_stats[host]['lossPercent'] is not None:
                     response += 'meraki_device_loss_percent' + target + '} ' + str(host_stats[host]['lossPercent']) + '\n'
             except KeyError:
@@ -247,11 +244,9 @@ class MyHandler(http.server.BaseHTTPRequestHandler):
                 for peer in host_stats[host]['thirdPartyVpnPeers']:
                     reachability_value = '1' if peer['reachability'] == 'reachable' else '0'
                     response += 'meraki_vpn_third_party_peers' + target + ',peer_name="' + peer['name'] + '",peer_publicIp="' + peer['publicIp'] + '",reachability="' + peer['reachability'] + '"} ' + reachability_value + '\n'
-            if 'temperature' in host_stats[host]:
-                response += 'meraki_sensor_temperature' + target + '} ' + str(host_stats[host]['temperature']) + '\n'
-            if 'humidity' in host_stats[host]:
-                response += 'meraki_sensor_humidity' + target + '} ' + str(host_stats[host]['humidity']) + '\n'
-            # Add other sensor metrics similarly...
+            for metric in ['apparentPower', 'battery', 'button', 'co2', 'current', 'door', 'downstreamPower', 'frequency', 'humidity', 'indoorAirQuality', 'noise', 'pm25', 'powerFactor', 'realPower', 'remoteLockoutSwitch', 'temperature', 'tvoc', 'voltage', 'water']:
+                if metric in host_stats[host]:
+                    response += f'meraki_sensor_{metric}' + target + '} ' + str(host_stats[host][metric]) + '\n'
 
         response += '# TYPE request_processing_seconds summary\n'
         response += 'request_processing_seconds ' + str(time.monotonic() - start_time) + '\n'
@@ -263,7 +258,7 @@ class MyHandler(http.server.BaseHTTPRequestHandler):
 
     def do_POST(self):
         self._set_headers_404()
-        return()
+        return
         self._set_headers()
 
 
