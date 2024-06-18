@@ -1,7 +1,6 @@
 import http.server
 import threading
 import time
-
 import configargparse
 import meraki
 
@@ -26,11 +25,11 @@ def get_vpn_statuses(vpnstatuses, dashboard, organizationId):
     print('Got ', len(vpnstatuses), 'VPN Statuses')
 
 
-def get_organizarion(org_data, dashboard, organizationId):
+def get_organization(org_data, dashboard, organizationId):
     org_data.update(dashboard.organizations.getOrganization(organizationId=organizationId))
 
 
-def get_organizarions(orgs_list, dashboard):
+def get_organizations(orgs_list, dashboard):
     response = dashboard.organizations.getOrganizations()
     for org in response:
         try:
@@ -38,6 +37,12 @@ def get_organizarions(orgs_list, dashboard):
             orgs_list.append(org['id'])
         except meraki.exceptions.APIError:
             pass
+
+
+def get_latest_sensor_readings(sensor_readings, dashboard, organizationId):
+    response = dashboard.sensor.getOrganizationSensorReadingsLatest(organizationId=organizationId, total_pages="all")
+    sensor_readings.extend(response)
+    print('Got', len(sensor_readings), 'Sensor Readings')
 
 
 def get_usage(dashboard, organizationId):
@@ -58,14 +63,19 @@ def get_usage(dashboard, organizationId):
     t4.start()
 
     org_data = {}
-    t5 = threading.Thread(target=get_organizarion, args=(org_data, dashboard, organizationId))
+    t5 = threading.Thread(target=get_organization, args=(org_data, dashboard, organizationId))
     t5.start()
+
+    sensor_readings = []
+    t6 = threading.Thread(target=get_latest_sensor_readings, args=(sensor_readings, dashboard, organizationId))
+    t6.start()
 
     t1.join()
     t2.join()
     t3.join()
     t4.join()
     t5.join()
+    t6.join()
 
     print('Combining collected data\n')
 
@@ -110,6 +120,20 @@ def get_usage(dashboard, organizationId):
         the_list[vpn['deviceSerial']]['merakiVpnPeers'] = vpn['merakiVpnPeers']
         the_list[vpn['deviceSerial']]['thirdPartyVpnPeers'] = vpn['thirdPartyVpnPeers']
 
+    for sensor in sensor_readings:
+        try:
+            the_list[sensor['serial']]
+        except KeyError:
+            the_list[sensor['serial']] = {"missing data": True}
+
+        for reading in sensor['readings']:
+            metric = reading['metric']
+            if metric == 'temperature':
+                the_list[sensor['serial']]['temperature'] = reading['temperature']['celsius']
+            elif metric == 'humidity':
+                the_list[sensor['serial']]['humidity'] = reading['humidity']['relativePercentage']
+            # Add other metrics here with similar checks...
+
     print('Done')
     return(the_list)
 
@@ -126,7 +150,6 @@ class MyHandler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
-
         if "/?target=" not in self.path and "/organizations" not in self.path:
             self._set_headers_404()
             return()
@@ -136,9 +159,9 @@ class MyHandler(http.server.BaseHTTPRequestHandler):
 
         if "/organizations" in self.path:
             org_list = list()
-            get_organizarions(org_list, dashboard)
-            responce = "- targets:\n   - " + "\n   - ".join(org_list)
-            self.wfile.write(responce.encode('utf-8'))
+            get_organizations(org_list, dashboard)
+            response = "- targets:\n   - " + "\n   - ".join(org_list)
+            self.wfile.write(response.encode('utf-8'))
             self.wfile.write("\n".encode('utf-8'))
             return
 
@@ -153,7 +176,7 @@ class MyHandler(http.server.BaseHTTPRequestHandler):
 
         uplink_statuses = {'active': 0, 'ready': 1, 'connecting': 2, 'not connected': 3, 'failed': 4}
 
-        responce = """
+        response = """
 # HELP meraki_device_latency The latency of the Meraki device in milliseconds
 # TYPE meraki_device_latency gauge
 # UNIT meraki_device_latency milliseconds
@@ -195,40 +218,45 @@ class MyHandler(http.server.BaseHTTPRequestHandler):
                 break
             try:
                 if host_stats[host]['latencyMs'] is not None:
-                    responce += 'meraki_device_latency' + target + '} ' + str(host_stats[host]['latencyMs']/1000) + '\n'
+                    response += 'meraki_device_latency' + target + '} ' + str(host_stats[host]['latencyMs']/1000) + '\n'
                 if host_stats[host]['lossPercent'] is not None:
-                    responce += 'meraki_device_loss_percent' + target + '} ' + str(host_stats[host]['lossPercent']) + '\n'
+                    response += 'meraki_device_loss_percent' + target + '} ' + str(host_stats[host]['lossPercent']) + '\n'
             except KeyError:
                 pass
             try:
-                responce += 'meraki_device_status' + target + '} ' + ('1' if host_stats[host]['status'] == 'online' else '0') + '\n'
+                response += 'meraki_device_status' + target + '} ' + ('1' if host_stats[host]['status'] == 'online' else '0') + '\n'
             except KeyError:
                 pass
             try:
-                responce += 'meraki_device_using_cellular_failover' + target + '} ' + ('1' if host_stats[host]['usingCellularFailover'] else '0') + '\n'
+                response += 'meraki_device_using_cellular_failover' + target + '} ' + ('1' if host_stats[host]['usingCellularFailover'] else '0') + '\n'
             except KeyError:
                 pass
             if 'uplinks' in host_stats[host]:
                 for uplink in host_stats[host]['uplinks'].keys():
-                    responce += 'meraki_device_uplink_status' + target + ',uplink="' + uplink + '"} ' + str(uplink_statuses[host_stats[host]['uplinks'][uplink]]) + '\n'
+                    response += 'meraki_device_uplink_status' + target + ',uplink="' + uplink + '"} ' + str(uplink_statuses[host_stats[host]['uplinks'][uplink]]) + '\n'
             if 'vpnMode' in host_stats[host]:
-                responce += 'meraki_vpn_mode' + target + '} ' + ('1' if host_stats[host]['vpnMode'] == 'hub' else '0') + '\n'
+                response += 'meraki_vpn_mode' + target + '} ' + ('1' if host_stats[host]['vpnMode'] == 'hub' else '0') + '\n'
             if 'exportedSubnets' in host_stats[host]:
                 for subnet in host_stats[host]['exportedSubnets']:
-                    responce += 'meraki_vpn_exported_subnets' + target + ',subnet="' + subnet + '"} 1\n'
+                    response += 'meraki_vpn_exported_subnets' + target + ',subnet="' + subnet + '"} 1\n'
             if 'merakiVpnPeers' in host_stats[host]:
                 for peer in host_stats[host]['merakiVpnPeers']:
                     reachability_value = '1' if peer['reachability'] == 'reachable' else '0'
-                    responce += 'meraki_vpn_meraki_peers' + target + ',peer_networkId="' + peer['networkId'] + '",peer_networkName="' + peer['networkName'] + '",reachability="' + peer['reachability'] + '"} ' + reachability_value + '\n'
+                    response += 'meraki_vpn_meraki_peers' + target + ',peer_networkId="' + peer['networkId'] + '",peer_networkName="' + peer['networkName'] + '",reachability="' + peer['reachability'] + '"} ' + reachability_value + '\n'
             if 'thirdPartyVpnPeers' in host_stats[host]:
                 for peer in host_stats[host]['thirdPartyVpnPeers']:
                     reachability_value = '1' if peer['reachability'] == 'reachable' else '0'
-                    responce += 'meraki_vpn_third_party_peers' + target + ',peer_name="' + peer['name'] + '",peer_publicIp="' + peer['publicIp'] + '",reachability="' + peer['reachability'] + '"} ' + reachability_value + '\n'
+                    response += 'meraki_vpn_third_party_peers' + target + ',peer_name="' + peer['name'] + '",peer_publicIp="' + peer['publicIp'] + '",reachability="' + peer['reachability'] + '"} ' + reachability_value + '\n'
+            if 'temperature' in host_stats[host]:
+                response += 'meraki_sensor_temperature' + target + '} ' + str(host_stats[host]['temperature']) + '\n'
+            if 'humidity' in host_stats[host]:
+                response += 'meraki_sensor_humidity' + target + '} ' + str(host_stats[host]['humidity']) + '\n'
+            # Add other sensor metrics similarly...
 
-        responce += '# TYPE request_processing_seconds summary\n'
-        responce += 'request_processing_seconds ' + str(time.monotonic() - start_time) + '\n'
+        response += '# TYPE request_processing_seconds summary\n'
+        response += 'request_processing_seconds ' + str(time.monotonic() - start_time) + '\n'
 
-        self.wfile.write(responce.encode('utf-8'))
+        self.wfile.write(response.encode('utf-8'))
 
     def do_HEAD(self):
         self._set_headers()
@@ -240,7 +268,7 @@ class MyHandler(http.server.BaseHTTPRequestHandler):
 
 
 if __name__ == '__main__':
-    parser = configargparse.ArgumentParser(description='Per-User traffic stats Pronethetius exporter for Meraki API.')
+    parser = configargparse.ArgumentParser(description='Per-User traffic stats Prometheus exporter for Meraki API.')
     parser.add_argument('-k', metavar='API_KEY', type=str, required=True,
                         env_var='MERAKI_API_KEY', help='API Key')
     parser.add_argument('-p', metavar='http_port', type=int, default=9822,
