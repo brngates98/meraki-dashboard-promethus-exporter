@@ -128,8 +128,45 @@ def get_usage(dashboard, organizationId):
 
         for reading in sensor['readings']:
             metric = reading['metric']
-            if metric not in the_list[sensor['serial']]:
-                the_list[sensor['serial']][metric] = reading[metric]
+            if metric == 'temperature':
+                if 'temperature' not in the_list[sensor['serial']]:
+                    the_list[sensor['serial']]['temperature'] = {}
+                the_list[sensor['serial']]['temperature']['celsius'] = reading.get('temperature', {}).get('celsius')
+                the_list[sensor['serial']]['temperature']['fahrenheit'] = reading.get('temperature', {}).get('fahrenheit')
+            elif metric == 'humidity':
+                the_list[sensor['serial']]['humidity'] = reading.get('humidity', {}).get('relativePercentage')
+            elif metric == 'battery':
+                the_list[sensor['serial']]['battery'] = reading.get('battery', {}).get('percentage')
+            elif metric == 'button':
+                the_list[sensor['serial']]['button'] = reading.get('button', {}).get('pressType')
+            elif metric == 'co2':
+                the_list[sensor['serial']]['co2'] = reading.get('co2', {}).get('concentration')
+            elif metric == 'current':
+                the_list[sensor['serial']]['current'] = reading.get('current', {}).get('draw')
+            elif metric == 'door':
+                the_list[sensor['serial']]['door'] = int(reading.get('door', {}).get('open', 0))
+            elif metric == 'downstreamPower':
+                the_list[sensor['serial']]['downstreamPower'] = int(reading.get('downstreamPower', {}).get('enabled', 0))
+            elif metric == 'frequency':
+                the_list[sensor['serial']]['frequency'] = reading.get('frequency', {}).get('level')
+            elif metric == 'indoorAirQuality':
+                the_list[sensor['serial']]['indoorAirQuality'] = reading.get('indoorAirQuality', {}).get('score')
+            elif metric == 'noise':
+                the_list[sensor['serial']]['noise'] = reading.get('noise', {}).get('ambient', {}).get('level')
+            elif metric == 'pm25':
+                the_list[sensor['serial']]['pm25'] = reading.get('pm25', {}).get('concentration')
+            elif metric == 'powerFactor':
+                the_list[sensor['serial']]['powerFactor'] = reading.get('powerFactor', {}).get('percentage')
+            elif metric == 'realPower':
+                the_list[sensor['serial']]['realPower'] = reading.get('realPower', {}).get('draw')
+            elif metric == 'remoteLockoutSwitch':
+                the_list[sensor['serial']]['remoteLockoutSwitch'] = int(reading.get('remoteLockoutSwitch', {}).get('locked', 0))
+            elif metric == 'tvoc':
+                the_list[sensor['serial']]['tvoc'] = reading.get('tvoc', {}).get('concentration')
+            elif metric == 'voltage':
+                the_list[sensor['serial']]['voltage'] = reading.get('voltage', {}).get('level')
+            elif metric == 'water':
+                the_list[sensor['serial']]['water'] = int(reading.get('water', {}).get('present', 0))
 
     print('Done')
     return the_list
@@ -244,9 +281,14 @@ class MyHandler(http.server.BaseHTTPRequestHandler):
                 for peer in host_stats[host]['thirdPartyVpnPeers']:
                     reachability_value = '1' if peer['reachability'] == 'reachable' else '0'
                     response += 'meraki_vpn_third_party_peers' + target + ',peer_name="' + peer['name'] + '",peer_publicIp="' + peer['publicIp'] + '",reachability="' + peer['reachability'] + '"} ' + reachability_value + '\n'
+
             for metric in ['apparentPower', 'battery', 'button', 'co2', 'current', 'door', 'downstreamPower', 'frequency', 'humidity', 'indoorAirQuality', 'noise', 'pm25', 'powerFactor', 'realPower', 'remoteLockoutSwitch', 'temperature', 'tvoc', 'voltage', 'water']:
                 if metric in host_stats[host]:
-                    response += f'meraki_sensor_{metric}' + target + '} ' + str(host_stats[host][metric]) + '\n'
+                    if isinstance(host_stats[host][metric], dict):
+                        for sub_metric, value in host_stats[host][metric].items():
+                            response += f'meraki_sensor_{metric}_{sub_metric}' + target + '} ' + str(value) + '\n'
+                    else:
+                        response += f'meraki_sensor_{metric}' + target + '} ' + str(host_stats[host][metric]) + '\n'
 
         response += '# TYPE request_processing_seconds summary\n'
         response += 'request_processing_seconds ' + str(time.monotonic() - start_time) + '\n'
